@@ -210,6 +210,19 @@ contract AnchorFlashLiquidator is Ownable, IERC3156FlashBorrower {
         }
     }
 
+    function getAccountsLiquidity(address[] calldata accounts)
+        external
+        view
+        returns (uint256[] memory statuses)
+    {
+        statuses = new uint256[](accounts.length);
+        for (uint256 i = 0; i < accounts.length; i++) {
+            (, , uint256 shortfall) =
+                comptroller.getAccountLiquidity(accounts[i]);
+            statuses[i] = shortfall;
+        }
+    }
+
     function _getPath(address _tokenIn, address _tokenOut)
         internal
         pure
