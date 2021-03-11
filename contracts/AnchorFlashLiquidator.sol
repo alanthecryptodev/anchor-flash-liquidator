@@ -62,33 +62,32 @@ contract AnchorFlashLiquidator is Ownable {
         (, , uint256 shortfall) = comptroller.getAccountLiquidity(_borrower);
         require(shortfall > 0, "!liquidatable");
 
-        address _underlying = ICErc20(_cErc20).underlying();
-        uint256 _amountToRepay =
-            ICErc20(_cErc20).borrowBalanceStored(_borrower);
-        uint256 _tokensNeeded;
+        address underlying = ICErc20(_cErc20).underlying();
+        uint256 amountToRepay = ICErc20(_cErc20).borrowBalanceStored(_borrower);
+        uint256 tokensNeeded;
         {
             // scope to avoid stack too deep error
-            address[] memory path = _getPath(_flashLoanToken, _underlying);
-            _tokensNeeded = _enterRouter.getAmountsIn(_amountToRepay, path)[0];
+            address[] memory path = _getPath(_flashLoanToken, underlying);
+            tokensNeeded = _enterRouter.getAmountsIn(amountToRepay, path)[0];
             require(
-                _tokensNeeded <= flashLender.maxFlashLoan(_flashLoanToken),
+                tokensNeeded <= flashLender.maxFlashLoan(_flashLoanToken),
                 "Insufficient lender reserves"
             );
-            uint256 _fee = flashLender.flashFee(_flashLoanToken, _tokensNeeded);
-            uint256 repayment = _tokensNeeded + _fee;
+            uint256 fee = flashLender.flashFee(_flashLoanToken, tokensNeeded);
+            uint256 repayment = tokensNeeded + fee;
             _approve(IERC20(_flashLoanToken), address(flashLender), repayment);
         }
         bytes memory data =
             abi.encode(
                 LiquidationData({
                     cErc20: _cErc20,
-                    underlying: _underlying,
+                    underlying: underlying,
                     cTokenCollateral: _cTokenCollateral,
                     borrower: _borrower,
                     caller: msg.sender,
                     enterRouter: _enterRouter,
                     exitRouter: _exitRouter,
-                    amountToRepay: _amountToRepay,
+                    amountToRepay: amountToRepay,
                     minProfit: _minProfit,
                     deadline: _deadline
                 })
@@ -96,7 +95,7 @@ contract AnchorFlashLiquidator is Ownable {
         flashLender.flashLoan(
             address(this),
             _flashLoanToken,
-            _tokensNeeded,
+            tokensNeeded,
             data
         );
     }
@@ -134,13 +133,17 @@ contract AnchorFlashLiquidator is Ownable {
             liqData.amountToRepay,
             liqData.cTokenCollateral
         );
-        uint256 seizedBal =
+        uint256 seizedBalance =
             IERC20(liqData.cTokenCollateral).balanceOf(address(this));
 
         // Step 3: Redeem seized cTokens for collateral
-        _approve(IERC20(liqData.cTokenCollateral), liqData.cErc20, seizedBal);
+        _approve(
+            IERC20(liqData.cTokenCollateral),
+            liqData.cErc20,
+            seizedBalance
+        );
         uint256 ethBalBefore = address(this).balance; // snapshot ETH balance before redeem to determine if it is cEther
-        ICErc20(liqData.cTokenCollateral).redeem(seizedBal);
+        ICErc20(liqData.cTokenCollateral).redeem(seizedBalance);
         address underlying;
 
         // Step 3.1: Get amount of underlying collateral redeemed
@@ -177,7 +180,7 @@ contract AnchorFlashLiquidator is Ownable {
         // Step 5: Sanity check to ensure process is profitable
         require(
             tokensReceived >= amount + fee + liqData.minProfit,
-            "Not enough profit"
+            "!profitable"
         );
 
         // Step 6: Send profits to caller
