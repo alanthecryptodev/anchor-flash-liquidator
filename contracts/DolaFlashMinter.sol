@@ -47,7 +47,7 @@ contract DolaFlashMinter is Ownable, IERC3156FlashLender {
             "flash loan failed"
         );
 
-        // Step 3: Retrieve minted Dola from receiver
+        // Step 3: Retrieve (minted + fee) Dola from receiver
         dola.safeTransferFrom(address(receiver), address(this), value + fee);
 
         // Step 4: Burn minted Dola (fees accumulate in contract)
@@ -57,7 +57,7 @@ contract DolaFlashMinter is Ownable, IERC3156FlashLender {
         return true;
     }
 
-    // Collect fees and etreive any tokens sent to this contract by mistake
+    // Collect fees and retreive any tokens sent to this contract by mistake
     function collect(address _token) external {
         if (_token == address(0)) {
             Address.sendValue(payable(treasury), address(this).balance);
@@ -86,13 +86,13 @@ contract DolaFlashMinter is Ownable, IERC3156FlashLender {
         return _token == address(dola) ? type(uint112).max - flashMinted : 0;
     }
 
-    function flashFee(address _token, uint256 _amount)
+    function flashFee(address _token, uint256 _value)
         public
         view
         override
         returns (uint256)
     {
         require(_token == address(dola), "!dola");
-        return (_amount * flashLoanRate) / 1e18;
+        return (_value * flashLoanRate) / 1e18;
     }
 }
