@@ -23,19 +23,16 @@ contract AnchorFlashLiquidator is Ownable {
         IRouter(0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F);
     IRouter public constant uniRouter =
         IRouter(0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D);
-    IERC20 public constant dola =
-        IERC20(0x865377367054516e17014CcdED1e7d814EDC9ce4);
     IWeth public constant weth =
         IWeth(0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2);
-    IERC20 public constant dai =
-        IERC20(0x6B175474E89094C44Da98b954EedeAC495271d0F);
 
     struct LiquidationData {
         address cErc20;
+        address underlying;
         address cTokenCollateral;
         address borrower;
         address caller;
-        IRouter dolaRouter;
+        IRouter enterRouter;
         IRouter exitRouter;
         uint256 amountToRepay;
         uint256 minProfit;
@@ -43,6 +40,7 @@ contract AnchorFlashLiquidator is Ownable {
     }
 
     receive() external payable {}
+
     fallback() external payable {}
 
     function liquidate(
@@ -50,41 +48,45 @@ contract AnchorFlashLiquidator is Ownable {
         address _cErc20,
         address _borrower,
         address _cTokenCollateral,
-        IRouter _dolaRouter,
+        IRouter _enterRouter,
         IRouter _exitRouter,
         uint256 _minProfit,
         uint256 _deadline
     ) external {
         require(
-            (_dolaRouter == sushiRouter || _dolaRouter == uniRouter) &&
+            (_enterRouter == sushiRouter || _enterRouter == uniRouter) &&
                 (_exitRouter == sushiRouter || _exitRouter == uniRouter),
             "Invalid router"
         );
-        // make sure _borrower is liquidatable
+        // make sure borrower is liquidatable
         (, , uint256 shortfall) = comptroller.getAccountLiquidity(_borrower);
         require(shortfall > 0, "!liquidatable");
-        uint256 _amountToRepay = ICErc20(_cErc20).borrowBalanceStored(_borrower);
-        address[] memory path = _getDolaPath(_flashLoanToken);
-        uint256 tokensNeeded;
+
+        address _underlying = ICErc20(_cErc20).underlying();
+        uint256 _amountToRepay =
+            ICErc20(_cErc20).borrowBalanceStored(_borrower);
+        uint256 _tokensNeeded;
         {
             // scope to avoid stack too deep error
-            tokensNeeded = _dolaRouter.getAmountsIn(_amountToRepay, path)[0];
+            address[] memory path = _getPath(_flashLoanToken, _underlying);
+            _tokensNeeded = _enterRouter.getAmountsIn(_amountToRepay, path)[0];
             require(
-                tokensNeeded <= flashLender.maxFlashLoan(_flashLoanToken),
+                _tokensNeeded <= flashLender.maxFlashLoan(_flashLoanToken),
                 "Insufficient lender reserves"
             );
-            uint256 fee = flashLender.flashFee(_flashLoanToken, tokensNeeded);
-            uint256 repayment = tokensNeeded + fee;
+            uint256 _fee = flashLender.flashFee(_flashLoanToken, _tokensNeeded);
+            uint256 repayment = _tokensNeeded + _fee;
             _approve(IERC20(_flashLoanToken), address(flashLender), repayment);
         }
         bytes memory data =
             abi.encode(
                 LiquidationData({
                     cErc20: _cErc20,
+                    underlying: _underlying,
                     cTokenCollateral: _cTokenCollateral,
                     borrower: _borrower,
                     caller: msg.sender,
-                    dolaRouter: _dolaRouter,
+                    enterRouter: _enterRouter,
                     exitRouter: _exitRouter,
                     amountToRepay: _amountToRepay,
                     minProfit: _minProfit,
@@ -94,7 +96,7 @@ contract AnchorFlashLiquidator is Ownable {
         flashLender.flashLoan(
             address(this),
             _flashLoanToken,
-            tokensNeeded,
+            _tokensNeeded,
             data
         );
     }
@@ -110,10 +112,10 @@ contract AnchorFlashLiquidator is Ownable {
         require(initiator == address(this), "Untrusted loan initiator");
         LiquidationData memory liqData = abi.decode(data, (LiquidationData));
 
-        // Step 1: Convert token to DOLA
-        _approve(IERC20(token), address(liqData.dolaRouter), amount);
-        address[] memory entryPath = _getDolaPath(token);
-        liqData.dolaRouter.swapTokensForExactTokens(
+        // Step 1: Convert token to repay token
+        _approve(IERC20(token), address(liqData.enterRouter), amount);
+        address[] memory entryPath = _getPath(token, liqData.underlying);
+        liqData.enterRouter.swapTokensForExactTokens(
             liqData.amountToRepay,
             type(uint256).max,
             entryPath,
@@ -122,7 +124,11 @@ contract AnchorFlashLiquidator is Ownable {
         );
 
         // Step 2: Liquidate borrower and seize their cToken
-        _approve(dola, liqData.cErc20, liqData.amountToRepay);
+        _approve(
+            IERC20(liqData.underlying),
+            liqData.cErc20,
+            liqData.amountToRepay
+        );
         ICErc20(liqData.cErc20).liquidateBorrow(
             liqData.borrower,
             liqData.amountToRepay,
@@ -156,7 +162,7 @@ contract AnchorFlashLiquidator is Ownable {
                 address(liqData.exitRouter),
                 underlyingBal
             );
-            address[] memory exitPath = _getExitPath(underlying, token);
+            address[] memory exitPath = _getPath(underlying, token);
             tokensReceived = liqData.exitRouter.swapExactTokensForTokens(
                 underlyingBal,
                 0,
@@ -193,37 +199,20 @@ contract AnchorFlashLiquidator is Ownable {
         comptroller = _comptroller;
     }
 
-    function _getDolaPath(address _token)
+    function _getPath(address _tokenIn, address _tokenOut)
         internal
         pure
         returns (address[] memory path)
     {
-        if (_token == address(weth)) {
+        if (_tokenIn == address(weth)) {
             path = new address[](2);
             path[0] = address(weth);
-            path[1] = address(dola);
+            path[1] = _tokenOut;
         } else {
             path = new address[](3);
-            path[0] = _token;
+            path[0] = _tokenIn;
             path[1] = address(weth);
-            path[2] = address(dola);
-        }
-    }
-
-    function _getExitPath(address _underlying, address _token)
-        internal
-        pure
-        returns (address[] memory path)
-    {
-        if (_underlying == address(weth)) {
-            path = new address[](2);
-            path[0] = address(weth);
-            path[1] = _token;
-        } else {
-            path = new address[](3);
-            path[0] = address(_underlying);
-            path[1] = address(weth);
-            path[2] = _token;
+            path[2] = _tokenOut;
         }
     }
 
