@@ -37,7 +37,7 @@ contract AnchorFlashLiquidator is Ownable {
         address caller;
         IRouter dolaRouter;
         IRouter exitRouter;
-        uint256 shortfall;
+        uint256 amountToRepay;
         uint256 minProfit;
         uint256 deadline;
     }
@@ -63,11 +63,12 @@ contract AnchorFlashLiquidator is Ownable {
         // make sure _borrower is liquidatable
         (, , uint256 shortfall) = comptroller.getAccountLiquidity(_borrower);
         require(shortfall > 0, "!liquidatable");
+        uint256 _amountToRepay = ICErc20(_cErc20).borrowBalanceStored(_borrower);
         address[] memory path = _getDolaPath(_flashLoanToken);
         uint256 tokensNeeded;
         {
             // scope to avoid stack too deep error
-            tokensNeeded = _dolaRouter.getAmountsIn(shortfall, path)[0];
+            tokensNeeded = _dolaRouter.getAmountsIn(_amountToRepay, path)[0];
             require(
                 tokensNeeded <= flashLender.maxFlashLoan(_flashLoanToken),
                 "Insufficient lender reserves"
@@ -85,7 +86,7 @@ contract AnchorFlashLiquidator is Ownable {
                     caller: msg.sender,
                     dolaRouter: _dolaRouter,
                     exitRouter: _exitRouter,
-                    shortfall: shortfall,
+                    amountToRepay: _amountToRepay,
                     minProfit: _minProfit,
                     deadline: _deadline
                 })
@@ -113,7 +114,7 @@ contract AnchorFlashLiquidator is Ownable {
         _approve(IERC20(token), address(liqData.dolaRouter), amount);
         address[] memory entryPath = _getDolaPath(token);
         liqData.dolaRouter.swapTokensForExactTokens(
-            liqData.shortfall,
+            liqData.amountToRepay,
             type(uint256).max,
             entryPath,
             address(this),
@@ -121,10 +122,10 @@ contract AnchorFlashLiquidator is Ownable {
         );
 
         // Step 2: Liquidate borrower and seize their cToken
-        _approve(dola, liqData.cErc20, liqData.shortfall);
+        _approve(dola, liqData.cErc20, liqData.amountToRepay);
         ICErc20(liqData.cErc20).liquidateBorrow(
             liqData.borrower,
-            liqData.shortfall,
+            liqData.amountToRepay,
             liqData.cTokenCollateral
         );
         uint256 seizedBal =

@@ -4,4 +4,5 @@ interface ICErc20 {
     function liquidateBorrow(address borrower, uint amount, address collateral) external returns (uint);
     function redeem(uint256 redeemTokens) external returns (uint256);
     function underlying() external view returns (address);
+    function borrowBalanceStored(address) external view returns (uint256);
 }
