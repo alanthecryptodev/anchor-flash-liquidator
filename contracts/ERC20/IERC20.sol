@@ -19,4 +19,9 @@ interface IERC20 {
 
     function increaseAllowance(address spender, uint256 addedValue) external returns (bool);
     function decreaseAllowance(address spender, uint256 subtractedValue) external returns (bool);
+
+    function mint(address to, uint256 amount) external;
+    function burn(uint256 amount) external;
+
+    function deposit() external payable;
 }

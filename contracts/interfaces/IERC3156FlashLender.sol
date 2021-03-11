@@ -31,7 +31,7 @@ interface IERC3156FlashLender {
     * @param data Arbitrary data structure, intended to contain user-defined parameters.
     */
   function flashLoan(
-      address receiver,
+      IERC3156FlashBorrower receiver,
       address token,
       uint256 amount,
       bytes calldata data

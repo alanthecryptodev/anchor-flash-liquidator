@@ -5,14 +5,13 @@ pragma solidity ^0.8.0;
 import "./interfaces/IERC3156FlashBorrower.sol";
 import "./interfaces/IERC3156FlashLender.sol";
 import "./interfaces/ICErc20.sol";
-import "./interfaces/IWeth.sol";
 import "./interfaces/IComptroller.sol";
 import "./interfaces/IRouter.sol";
 import "./utils/Ownable.sol";
 import "./ERC20/IERC20.sol";
 import "./ERC20/SafeERC20.sol";
 
-contract AnchorFlashLiquidator is Ownable {
+contract AnchorFlashLiquidator is Ownable, IERC3156FlashBorrower {
     using SafeERC20 for IERC20;
 
     IERC3156FlashLender public flashLender =
@@ -23,8 +22,8 @@ contract AnchorFlashLiquidator is Ownable {
         IRouter(0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F);
     IRouter public constant uniRouter =
         IRouter(0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D);
-    IWeth public constant weth =
-        IWeth(0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2);
+    IERC20 public constant weth =
+        IERC20(0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2);
 
     struct LiquidationData {
         address cErc20;
@@ -93,7 +92,7 @@ contract AnchorFlashLiquidator is Ownable {
                 })
             );
         flashLender.flashLoan(
-            address(this),
+            IERC3156FlashBorrower(address(this)),
             _flashLoanToken,
             tokensNeeded,
             data
@@ -106,7 +105,7 @@ contract AnchorFlashLiquidator is Ownable {
         uint256 amount,
         uint256 fee,
         bytes calldata data
-    ) external returns (bytes32) {
+    ) external override returns (bytes32) {
         require(msg.sender == address(flashLender), "Untrusted lender");
         require(initiator == address(this), "Untrusted loan initiator");
         LiquidationData memory liqData = abi.decode(data, (LiquidationData));
@@ -200,6 +199,15 @@ contract AnchorFlashLiquidator is Ownable {
 
     function setComptroller(IComptroller _comptroller) external onlyOwner {
         comptroller = _comptroller;
+    }
+
+    function collect(address _token) external {
+        if (_token == address(0)) {
+            Address.sendValue(payable(owner()), address(this).balance);
+        } else {
+            uint256 balance = IERC20(_token).balanceOf(address(this));
+            IERC20(_token).safeTransfer(owner(), balance);
+        }
     }
 
     function _getPath(address _tokenIn, address _tokenOut)
